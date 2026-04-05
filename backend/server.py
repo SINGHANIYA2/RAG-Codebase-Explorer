@@ -22,6 +22,7 @@ app.add_middleware(
 
 repo_status = {}
 
+# schema
 class IngestRequest(BaseModel):
     repo_url: str
 

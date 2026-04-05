@@ -269,9 +269,7 @@ const HomeView = ({ setRepoUrl, setRepoId, navigate, apiBase }) => {
             onClick={() => handleExplore()}
             disabled={isLoading}
             style={{
-              background: isLoading
-                ? 'rgba(79,142,247,0.4)'
-                : 'linear-gradient(135deg, #4f8ef7, #6ba3fa)',
+              background: isLoading ? 'rgba(79,142,247,0.4)' : 'linear-gradient(135deg, #4f8ef7, #6ba3fa)',
               color: 'white', border: 'none',
               padding: '12px 24px', borderRadius: '12px',
               fontSize: '14px', fontWeight: '600',

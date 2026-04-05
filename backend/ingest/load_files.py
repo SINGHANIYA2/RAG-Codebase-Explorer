@@ -4,7 +4,7 @@ from langchain_core.documents import Document
 # allowed file extensions
 CODE_EXTENSIONS = [
     ".py", ".js", ".ts", ".java", ".cpp", ".c",
-    ".html", ".css", ".json", ".md"
+    ".html", ".css", ".json", ".md",".jsx",".tsx"
 ]
 
 IGNORE_DIRS = [
@@ -54,9 +54,6 @@ def load_code_files(repo_path: str):
     return documents
 
 
-# -------------------------------
-# TEST
-# -------------------------------
 if __name__ == "__main__":
 
     repo_path = "repos/sample_repo"

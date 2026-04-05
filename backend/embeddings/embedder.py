@@ -1,3 +1,5 @@
+from ingest.load_files import load_code_files
+from ingest.chunk_code import chunk_code_documents
 from dotenv import load_dotenv
 import os
 load_dotenv()
@@ -15,8 +17,6 @@ def get_embedding_model():
         model="text-embedding-3-small",
         api_key=os.getenv("OPENAI_API_KEY")
     )
-
-
 
 # STORE EMBEDDINGS
 
@@ -44,8 +44,6 @@ def store_embeddings(chunks, collection_name: str):
 
 if __name__ == "__main__":
 
-    from ingest.load_files import load_code_files
-    from ingest.chunk_code import chunk_code_documents
 
     repo_path = "repos/sample_repo"
     repo_id = "test_repo"
