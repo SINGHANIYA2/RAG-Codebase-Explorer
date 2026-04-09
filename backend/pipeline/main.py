@@ -4,7 +4,7 @@ from ingest.chunk_code import chunk_code_documents
 from embeddings.embedder import store_embeddings
 
 from rag.retriever import search_code
-from rag.generator import answer_question
+from rag.generator import answer_question, debug_code as generator_debug_code
 
 import shutil
 import os
@@ -23,13 +23,13 @@ def force_delete(func, path, exc_info):
         os.chmod(path, stat.S_IWRITE)
         func(path)
     except Exception as e:
-        print(f"⚠️ Still failed to delete: {path} | Error: {e}")
+        print(f" Still failed to delete: {path} | Error: {e}")
 
 
 #  INGEST PIPELINE
 
 def ingest_repo(repo_url, repo_id):
-    print("\n🚀 Ingestion started...\n")
+    print("\n Ingestion started...\n")
     try:
         # CLONE
         print("Cloning repository...")
@@ -81,4 +81,9 @@ def ask_questions(question, repo_id):
     answer = answer_question(question, repo_id=repo_id)
 
     return answer
+
+
+def debug_code(question, repo_id):
+    """Debug pipeline: uses specialized debug prompt with more context."""
+    return generator_debug_code(question=question, repo_id=repo_id)
 

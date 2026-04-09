@@ -119,7 +119,7 @@ const renderMarkdown = (text) => {
   return elements;
 };
 
-/* Inline markdown: **bold**, *italic*, `code`, [link](url) */
+/* Inline markdown: **bold**, *italic*, `code` */
 const renderInline = (text) => {
   if (!text) return null;
   const parts = [];
@@ -127,7 +127,6 @@ const renderInline = (text) => {
   let key = 0;
 
   while (remaining.length > 0) {
-    // Bold **text** or __text__
     let match = remaining.match(/^(.*?)\*\*(.+?)\*\*/s);
     if (!match) match = remaining.match(/^(.*?)__(.+?)__/s);
     if (match) {
@@ -137,7 +136,6 @@ const renderInline = (text) => {
       continue;
     }
 
-    // Inline code `code`
     match = remaining.match(/^(.*?)`(.+?)`/s);
     if (match) {
       if (match[1]) parts.push(<span key={key++}>{match[1]}</span>);
@@ -152,7 +150,6 @@ const renderInline = (text) => {
       continue;
     }
 
-    // Italic *text*
     match = remaining.match(/^(.*?)\*(.+?)\*/s);
     if (match) {
       if (match[1]) parts.push(<span key={key++}>{match[1]}</span>);
@@ -161,12 +158,50 @@ const renderInline = (text) => {
       continue;
     }
 
-    // No more inline markdown
     parts.push(<span key={key++}>{remaining}</span>);
     break;
   }
 
   return parts;
+};
+
+
+/* ------------------------------------------------------------------ */
+/*  Debug Metadata Banner                                              */
+/* ------------------------------------------------------------------ */
+const DebugMetaBanner = ({ meta }) => {
+  if (!meta) return null;
+  return (
+    <div style={{
+      display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '10px',
+      padding: '8px 12px', borderRadius: '8px',
+      background: 'rgba(255,107,53,0.06)',
+      border: '1px solid rgba(255,107,53,0.15)',
+    }}>
+      <span style={{
+        fontSize: '11px', fontWeight: '700', color: '#ff6b35',
+        display: 'flex', alignItems: 'center', gap: '4px',
+      }}>
+        🐛 DEBUG MODE
+      </span>
+      <span style={{ fontSize: '11px', color: '#888', margin: '0 4px' }}>|</span>
+      <span style={{ fontSize: '11px', color: '#999' }}>
+        📂 {meta.files_analyzed?.length || 0} files analyzed
+      </span>
+      <span style={{ fontSize: '11px', color: '#888', margin: '0 4px' }}>|</span>
+      <span style={{ fontSize: '11px', color: '#999' }}>
+        🧩 {meta.chunks_used || 0} code chunks scanned
+      </span>
+      {meta.files_analyzed && meta.files_analyzed.length > 0 && (
+        <div style={{ width: '100%', marginTop: '4px' }}>
+          <span style={{ fontSize: '10px', color: '#666' }}>
+            Files: {meta.files_analyzed.slice(0, 5).join(', ')}
+            {meta.files_analyzed.length > 5 && ` +${meta.files_analyzed.length - 5} more`}
+          </span>
+        </div>
+      )}
+    </div>
+  );
 };
 
 
@@ -187,10 +222,10 @@ const ChatView = ({ repoUrl, repoId, setRepoId, navigate, apiBase }) => {
   );
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [debugMode, setDebugMode] = useState(false);
   const bottomRef = useRef(null);
   const abortControllerRef = useRef(null);
 
-  // Save to localStorage on every message change
   useEffect(() => {
     if (messages.length === 0) return;
     const history = JSON.parse(localStorage.getItem('chat_history') || '[]');
@@ -213,7 +248,6 @@ const ChatView = ({ repoUrl, repoId, setRepoId, navigate, apiBase }) => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isTyping]);
 
-  // Switch to a different chat from sidebar
   const handleSelectChat = (chat) => {
     const history = JSON.parse(localStorage.getItem('chat_history') || '[]');
     const selected = history.find(h => h.id === chat.id);
@@ -222,7 +256,6 @@ const ChatView = ({ repoUrl, repoId, setRepoId, navigate, apiBase }) => {
       setCurrentRepo(selected.repoUrl);
       setCurrentRepoId(selected.repoId || '');
       setMessages(selected.messages);
-      // Update parent state so queries use the correct repo_id
       if (selected.repoId && setRepoId) {
         setRepoId(selected.repoId);
       }
@@ -249,15 +282,17 @@ const ChatView = ({ repoUrl, repoId, setRepoId, navigate, apiBase }) => {
     setInput('');
     setIsTyping(true);
 
-    // Cancel any previous in-flight request
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
+    // Choose endpoint: forced debug mode → /debug, else /smart-query (auto-detects)
+    const endpoint = debugMode ? '/debug' : '/smart-query';
+
     try {
-      const res = await fetch(`${apiBase}/query`, {
+      const res = await fetch(`${apiBase}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -273,11 +308,9 @@ const ChatView = ({ repoUrl, repoId, setRepoId, navigate, apiBase }) => {
           const errData = await res.json();
           errorMessage = errData.detail || errorMessage;
         } catch {
-          // response body wasn't JSON — use status text
           errorMessage = `Server error: ${res.status} ${res.statusText}`;
         }
 
-        // Specific handling for known backend error codes
         if (res.status === 404) {
           errorMessage = '⚠️ Repository not found on the server. The server may have restarted. Please re-ingest the repository from the Home page.';
         } else if (res.status === 400) {
@@ -292,8 +325,10 @@ const ChatView = ({ repoUrl, repoId, setRepoId, navigate, apiBase }) => {
       setIsTyping(false);
       abortControllerRef.current = null;
 
-      // Backend returns { status: "success", answer: "..." }
       const answer = data.answer;
+      const isDebugResponse = data.mode === 'debug';
+      const debugMeta = data.debug_meta || null;
+
       if (!answer || (typeof answer === 'string' && answer.trim() === '')) {
         setMessages(prev => [
           ...prev,
@@ -302,19 +337,20 @@ const ChatView = ({ repoUrl, repoId, setRepoId, navigate, apiBase }) => {
       } else {
         setMessages(prev => [
           ...prev,
-          { role: 'ai', text: answer },
+          {
+            role: 'ai',
+            text: answer,
+            isDebug: isDebugResponse,
+            debugMeta: debugMeta,
+          },
         ]);
       }
     } catch (err) {
       setIsTyping(false);
       abortControllerRef.current = null;
 
-      if (err.name === 'AbortError') {
-        // Request was cancelled — don't show error
-        return;
-      }
+      if (err.name === 'AbortError') return;
 
-      // Check for network/connection errors
       let errorText = err.message;
       if (err.message === 'Failed to fetch' || err.message.includes('NetworkError')) {
         errorText = '❌ Cannot reach the backend server. Make sure the server is running on ' + apiBase;
@@ -368,6 +404,22 @@ const ChatView = ({ repoUrl, repoId, setRepoId, navigate, apiBase }) => {
               {currentRepoId ? 'Ready' : 'Not ingested'}
             </span>
           </div>
+
+          {/* Debug Mode Indicator */}
+          {debugMode && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: '5px',
+              background: 'rgba(255,107,53,0.08)',
+              border: '1px solid rgba(255,107,53,0.25)',
+              borderRadius: '6px', padding: '4px 10px',
+              animation: 'debugPulse 2s ease-in-out infinite',
+            }}>
+              <span style={{ fontSize: '12px' }}>🐛</span>
+              <span style={{ fontSize: '11px', color: '#ff6b35', fontWeight: '600' }}>
+                Debug Mode ON
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Messages */}
@@ -385,21 +437,32 @@ const ChatView = ({ repoUrl, repoId, setRepoId, navigate, apiBase }) => {
                 width: '30px', height: '30px', borderRadius: '10px', flexShrink: 0,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 fontSize: '11px', fontWeight: '700',
-                background: m.role === 'ai' ? 'rgba(79,142,247,0.15)' : 'rgba(111,236,200,0.12)',
-                color: m.role === 'ai' ? '#4f8ef7' : '#6fecc8',
-                border: m.role === 'ai' ? '1px solid rgba(79,142,247,0.25)' : '1px solid rgba(111,236,200,0.2)',
+                background: m.isDebug
+                  ? 'rgba(255,107,53,0.15)'
+                  : m.role === 'ai' ? 'rgba(79,142,247,0.15)' : 'rgba(111,236,200,0.12)',
+                color: m.isDebug
+                  ? '#ff6b35'
+                  : m.role === 'ai' ? '#4f8ef7' : '#6fecc8',
+                border: m.isDebug
+                  ? '1px solid rgba(255,107,53,0.3)'
+                  : m.role === 'ai' ? '1px solid rgba(79,142,247,0.25)' : '1px solid rgba(111,236,200,0.2)',
               }}>
-                {m.role === 'ai' ? 'AI' : 'U'}
+                {m.isDebug ? '🐛' : m.role === 'ai' ? 'AI' : 'U'}
               </div>
               <div style={{
                 maxWidth: '68%', padding: '12px 16px',
                 borderRadius: m.role === 'ai' ? '4px 16px 16px 16px' : '16px 4px 16px 16px',
                 fontSize: '14px', lineHeight: '1.65',
-                background: m.role === 'ai' ? '#161b26' : 'rgba(79,142,247,0.12)',
-                border: m.role === 'ai' ? '1px solid rgba(255,255,255,0.06)' : '1px solid rgba(79,142,247,0.25)',
+                background: m.isDebug
+                  ? 'rgba(255,107,53,0.04)'
+                  : m.role === 'ai' ? '#161b26' : 'rgba(79,142,247,0.12)',
+                border: m.isDebug
+                  ? '1px solid rgba(255,107,53,0.15)'
+                  : m.role === 'ai' ? '1px solid rgba(255,255,255,0.06)' : '1px solid rgba(79,142,247,0.25)',
                 color: m.role === 'ai' ? '#c8cad8' : '#e8eaf0',
                 wordBreak: 'break-word',
               }}>
+                {m.isDebug && m.debugMeta && <DebugMetaBanner meta={m.debugMeta} />}
                 {m.role === 'ai' ? renderMarkdown(m.text) : m.text}
               </div>
             </div>
@@ -411,19 +474,25 @@ const ChatView = ({ repoUrl, repoId, setRepoId, navigate, apiBase }) => {
                 width: '30px', height: '30px', borderRadius: '10px', flexShrink: 0,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 fontSize: '11px', fontWeight: '700',
-                background: 'rgba(79,142,247,0.15)', color: '#4f8ef7',
-                border: '1px solid rgba(79,142,247,0.25)',
-              }}>AI</div>
+                background: debugMode ? 'rgba(255,107,53,0.15)' : 'rgba(79,142,247,0.15)',
+                color: debugMode ? '#ff6b35' : '#4f8ef7',
+                border: debugMode ? '1px solid rgba(255,107,53,0.3)' : '1px solid rgba(79,142,247,0.25)',
+              }}>{debugMode ? '🐛' : 'AI'}</div>
               <div style={{
                 padding: '14px 18px', borderRadius: '4px 16px 16px 16px',
-                background: '#161b26', border: '1px solid rgba(255,255,255,0.06)',
+                background: debugMode ? 'rgba(255,107,53,0.04)' : '#161b26',
+                border: debugMode ? '1px solid rgba(255,107,53,0.15)' : '1px solid rgba(255,255,255,0.06)',
                 display: 'flex', gap: '5px', alignItems: 'center',
               }}>
-                {[0,1,2].map(i => (
-                  <div key={i} style={{
-                    width: '6px', height: '6px', borderRadius: '50%', background: '#3a4560',
+                <span style={{ fontSize: '12px', color: debugMode ? '#ff6b35' : '#4f8ef7', marginRight: '8px' }}>
+                  {debugMode ? '🔍 Debugging...' : ''}
+                </span>
+                {[0,1,2].map(j => (
+                  <div key={j} style={{
+                    width: '6px', height: '6px', borderRadius: '50%',
+                    background: debugMode ? '#ff6b35' : '#3a4560',
                     animation: 'bounce 1.2s infinite',
-                    animationDelay: `${i * 0.2}s`,
+                    animationDelay: `${j * 0.2}s`,
                   }} />
                 ))}
               </div>
@@ -439,16 +508,45 @@ const ChatView = ({ repoUrl, repoId, setRepoId, navigate, apiBase }) => {
           background: '#0d0f14', flexShrink: 0,
         }}>
           <div style={{
-            display: 'flex', alignItems: 'center', gap: '12px',
+            display: 'flex', alignItems: 'center', gap: '8px',
             background: '#161b26',
-            border: '1px solid rgba(255,255,255,0.08)',
-            borderRadius: '14px', padding: '8px 8px 8px 18px',
+            border: debugMode
+              ? '1px solid rgba(255,107,53,0.25)'
+              : '1px solid rgba(255,255,255,0.08)',
+            borderRadius: '14px', padding: '8px 8px 8px 12px',
+            transition: 'border-color 0.3s',
           }}>
+            {/* Debug Toggle Button */}
+            <button
+              onClick={() => setDebugMode(!debugMode)}
+              title={debugMode ? 'Debug mode ON (click to disable)' : 'Enable debug mode'}
+              style={{
+                width: '36px', height: '36px', borderRadius: '10px', flexShrink: 0,
+                background: debugMode
+                  ? 'linear-gradient(135deg, #ff6b35, #ff8f65)'
+                  : 'rgba(255,255,255,0.04)',
+                border: debugMode
+                  ? '1px solid rgba(255,107,53,0.4)'
+                  : '1px solid rgba(255,255,255,0.08)',
+                cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: '16px',
+                transition: 'all 0.3s',
+                boxShadow: debugMode ? '0 0 12px rgba(255,107,53,0.3)' : 'none',
+              }}
+            >
+              🐛
+            </button>
+
             <input
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && sendMsg()}
-              placeholder={isTyping ? 'AI is thinking...' : 'Ask about the code...'}
+              placeholder={
+                isTyping
+                  ? (debugMode ? '🐛 Debugging...' : 'AI is thinking...')
+                  : (debugMode ? '🐛 Describe the bug or paste error...' : 'Ask about the code...')
+              }
               disabled={isTyping}
               style={{
                 flex: 1, background: 'transparent', border: 'none', outline: 'none',
@@ -474,7 +572,7 @@ const ChatView = ({ repoUrl, repoId, setRepoId, navigate, apiBase }) => {
             </button>
           </div>
           <p style={{ fontSize: '11px', color: '#2a3040', textAlign: 'center', marginTop: '10px' }}>
-            Press Enter to send · Chat saved automatically
+            Press Enter to send · {debugMode ? '🐛 Debug mode active — auto-analyzes bugs' : 'Click 🐛 to enable debug mode'} · Chat saved automatically
           </p>
         </div>
       </main>
@@ -483,6 +581,10 @@ const ChatView = ({ repoUrl, repoId, setRepoId, navigate, apiBase }) => {
         @keyframes bounce {
           0%, 100% { transform: translateY(0); opacity: 0.4; }
           50% { transform: translateY(-4px); opacity: 1; }
+        }
+        @keyframes debugPulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.6; }
         }
       `}</style>
     </div>

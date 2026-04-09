@@ -112,3 +112,83 @@ def answer_question(question: str, repo_id: str, debug: bool = False):
     })
 
     return getattr(response, "content", str(response))
+
+
+# ─── DEBUG CODE FUNCTION 
+def debug_code(question: str, repo_id: str):
+    """
+    Specialized debugging function: retrieves more context (k=10),
+    uses a debug-focused prompt to find bugs, root causes, and fixes.
+    """
+    # Retrieve more chunks for thorough debugging
+    results = search_code(question, repo_id=repo_id, k=10)
+    context = build_context(results)
+
+    # Collect file list for reference
+    files_found = list(set(
+        r.metadata.get("source", "unknown") for r in results
+    ))
+
+    debug_prompt = PromptTemplate.from_template(
+        """
+        You are an expert debugger and code doctor. The user has asked you to debug their code.
+
+        Your task is to analyze the provided codebase context, find bugs, issues, and problems,
+        then provide clear fixes.
+
+        ---------------------
+        DEBUGGING INSTRUCTIONS:
+
+        1. 🐛 **Bug Identification**
+           - List every bug, error, or issue you find
+           - Categorize: syntax error, logic error, runtime error, security issue, performance issue
+
+        2. 🔍 **Root Cause Analysis**
+           - For each bug, explain WHY it happens
+           - Trace the execution path that leads to the bug
+
+        3. 🔧 **Fix**
+           - Provide the EXACT corrected code for each bug
+           - Use code blocks with the filename as the language tag
+           - Show before (broken) and after (fixed) code
+
+        4. ⚠️ **Warnings & Edge Cases**
+           - Identify potential edge cases that could cause future issues
+           - Flag deprecated APIs, missing error handling, race conditions
+
+        5. ✅ **Verification Steps**
+           - Suggest how to verify each fix works
+           - Recommend test cases if applicable
+
+        6. 📊 **Summary**
+           - Quick summary: total bugs found, severity level, overall code health
+
+        ---------------------
+        FILES ANALYZED: {files}
+
+        CODE CONTEXT:
+        {context}
+
+        ---------------------
+        USER DEBUG REQUEST:
+        {question}
+
+        ---------------------
+        DEBUG REPORT:
+    """
+    )
+
+    llm = get_llm()
+    chain = debug_prompt | llm
+
+    response = chain.invoke({
+        "context": context,
+        "question": question,
+        "files": ", ".join(files_found),
+    })
+
+    return {
+        "answer": getattr(response, "content", str(response)),
+        "files_analyzed": files_found,
+        "chunks_used": len(results),
+    }

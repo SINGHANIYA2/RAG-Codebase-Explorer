@@ -5,15 +5,14 @@ import uvicorn
 import uuid
 from threading import Thread
 
-# YOUR PIPELINE FUNCTIONS
-from pipeline.main import ingest_repo , ask_questions
-
+# pipeline
+from pipeline.main import ingest_repo , ask_questions, debug_code
 
 app = FastAPI(title="RAG Codebase Explorer API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # change in production
+    allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -22,12 +21,18 @@ app.add_middleware(
 
 repo_status = {}
 
+
 # schema
 class IngestRequest(BaseModel):
     repo_url: str
 
 
 class QueryRequest(BaseModel):
+    question: str
+    repo_id: str
+
+
+class DebugRequest(BaseModel):
     question: str
     repo_id: str
 
@@ -50,7 +55,7 @@ def ingest(request: IngestRequest):
                 # run ingestion pipeline
                 ingest_repo(request.repo_url,repo_id=repo_id)
 
-                # mark ready
+                # status change kr do to ready for any query
                 repo_status[repo_id] = "ready"
 
             except Exception as e:
@@ -109,6 +114,100 @@ def query(request: QueryRequest):
             "answer": answer
         }
 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# DEBUG ENDPOINT 
+DEBUG_KEYWORDS = [
+    "debug", "bug", "fix", "error", "issue", "broken", "crash",
+    "failing", "exception", "traceback", "not working", "wrong output",
+    "unexpected", "fault", "defect", "troubleshoot",
+]
+
+def is_debug_intent(question: str) -> bool:
+    """Auto-detect if the user's question is a debug request."""
+    q = question.lower()
+    return any(kw in q for kw in DEBUG_KEYWORDS)
+
+@app.post("/debug")
+def debug_endpoint(request: DebugRequest):
+    try:
+        status = repo_status.get(request.repo_id)
+
+        if status is None:
+            raise HTTPException(status_code=404, detail="Invalid repo_id")
+
+        if status != "ready":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Repo not ready. Current status: {status}"
+            )
+
+        result = debug_code(
+            question=request.question,
+            repo_id=request.repo_id
+        )
+
+        return {
+            "status": "success",
+            "answer": result["answer"],
+            "debug_meta": {
+                "files_analyzed": result["files_analyzed"],
+                "chunks_used": result["chunks_used"],
+                "mode": "debug"
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+#  SMART QUERY
+@app.post("/smart-query")
+def smart_query(request: QueryRequest):
+    """Auto-routes to debug or normal query based on intent detection."""
+    try:
+        status = repo_status.get(request.repo_id)
+
+        if status is None:
+            raise HTTPException(status_code=404, detail="Invalid repo_id")
+        if status != "ready":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Repo not ready. Current status: {status}"
+            )
+
+        if is_debug_intent(request.question):
+            result = debug_code(
+                question=request.question,
+                repo_id=request.repo_id
+            )
+            return {
+                "status": "success",
+                "answer": result["answer"],
+                "mode": "debug",
+                "debug_meta": {
+                    "files_analyzed": result["files_analyzed"],
+                    "chunks_used": result["chunks_used"],
+                }
+            }
+        else:
+            answer = ask_questions(
+                question=request.question,
+                repo_id=request.repo_id
+            )
+            return {
+                "status": "success",
+                "answer": answer,
+                "mode": "normal",
+                "debug_meta": None
+            }
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
